@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a29">
+  <link rel="icon" href="data:,">
+  <title>Compare Studio — เปรียบเทียบไฟล์และรูป</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">≋</span><span>COMPARE<span class="brand-light">STUDIO</span></span></div>
+      <span class="top-tag">LOCAL WORKSPACE · 1 : 1 COMPARISON</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow"><span class="eyebrow-line"></span> DOCUMENT & IMAGE INTELLIGENCE</div>
+        <h1>เห็นทุกจุดที่<span>ต่าง</span><br>ยืนยันทุกอย่างที่<span>ตรง</span></h1>
+        <p>เปรียบเทียบเอกสาร รูปภาพ หรือข้ามชนิดไฟล์ได้ทีละคู่ หลายคู่พร้อมกัน พร้อมตำแหน่งและรายละเอียดของข้อมูลที่ต่างกัน</p>
+        <div class="hero-pills"><span>↗ เทียบข้อความทุกตัวอักษร</span><span>◉ เทียบพิกเซลรูปภาพ</span><span>▣ อ่านข้อความในภาพด้วย OCR</span></div>
+      </section>
+
+      <section class="workspace" aria-labelledby="workspace-heading">
+        <div class="section-head"><div><span class="step">01 / INPUT</span><h2 id="workspace-heading">เลือกข้อมูลที่จะเปรียบเทียบ</h2></div><span class="section-note">ไฟล์ไม่ถูกบันทึกบนเซิร์ฟเวอร์</span></div>
+        <div class="mode-tabs" role="tablist" aria-label="วิธีเลือกไฟล์">
+          <button id="manual-tab" class="mode-tab active" role="tab" aria-selected="true" type="button">จับคู่ไฟล์เอง</button>
+          <button id="folder-tab" class="mode-tab" role="tab" aria-selected="false" type="button">จับคู่จาก 2 โฟลเดอร์</button>
+        </div>
+
+        <div id="manual-panel" class="mode-panel" role="tabpanel">
+          <div class="panel-intro"><strong>คู่เปรียบเทียบ</strong><span>เลือกไฟล์ด้านซ้ายและขวาของแต่ละรายการ</span></div>
+          <div id="pair-list" class="pair-list"></div>
+          <button id="add-pair" type="button" class="add-button"><span>＋</span> เพิ่มคู่เปรียบเทียบ</button>
+        </div>
+
+        <div id="folder-panel" class="mode-panel hidden" role="tabpanel">
+          <div class="panel-intro"><strong>จับคู่ตามตำแหน่งและชื่อไฟล์</strong><span>เลือกโฟลเดอร์สองฝั่ง ระบบจับคู่ไฟล์ที่มี path ภายในตรงกัน</span></div>
+          <div class="folder-grid">
+            <label class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">โฟลเดอร์ต้นฉบับ</span><span id="left-folder-name" class="folder-subtitle">คลิกเพื่อเลือกโฟลเดอร์</span><input id="left-folder" type="file" webkitdirectory directory multiple></label>
+            <div class="folder-connector">↔</div>
+            <label class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">โฟลเดอร์ที่ต้องการเทียบ</span><span id="right-folder-name" class="folder-subtitle">คลิกเพื่อเลือกโฟลเดอร์</span><input id="right-folder" type="file" webkitdirectory directory multiple></label>
+          </div>
+          <p id="folder-summary" class="folder-summary">เลือกทั้งสองโฟลเดอร์เพื่อดูรายการที่จับคู่ได้</p>
+        </div>
+
+        <div class="action-row"><div class="support-note">รองรับ TXT, CSV, JSON, PDF, DOCX, XLSX และรูปภาพ · สูงสุด 20 MB / ไฟล์</div><button id="compare-button" class="compare-button" type="button">เริ่มเปรียบเทียบ <span>↗</span></button></div>
+      </section>
+
+      <section id="results-section" class="results-section hidden" aria-labelledby="results-heading">
+        <div class="section-head"><div><span class="step">02 / RESULTS</span><h2 id="results-heading">ผลการเปรียบเทียบ</h2></div><span id="result-count" class="result-count"></span></div>
+        <div id="summary-cards" class="summary-cards"></div>
+        <div id="results-list" class="results-list"></div>
+      </section>
+    </main>
+
+    <footer>COMPARE STUDIO <span>·</span> ผลการอ่านภาพด้วย OCR อาจคลาดเคลื่อน ควรตรวจภาพต้นฉบับเมื่อความถูกต้องสำคัญ</footer>
+  </div>
+</body>
+</html>

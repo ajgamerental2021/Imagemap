@@ -1,0 +1,97 @@
+import io
+import unittest
+
+from docx import Document
+from fastapi.testclient import TestClient
+from openpyxl import Workbook
+from PIL import Image, ImageDraw, ImageFont
+from pypdf import PdfWriter
+
+from app import app
+
+
+client = TestClient(app)
+
+
+def request(left_name, left_bytes, right_name, right_bytes):
+    return client.post('/api/compare', files={
+        'left': (left_name, left_bytes), 'right': (right_name, right_bytes),
+    })
+
+
+def image_bytes(text=None, color='white'):
+    image = Image.new('RGB', (430, 105), color)
+    if text:
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 42)
+        draw.text((12, 22), text, fill='black', font=font)
+    output = io.BytesIO()
+    image.save(output, format='PNG')
+    return output.getvalue()
+
+
+class ComparisonTests(unittest.TestCase):
+    def test_exact_text_and_multiple_changes(self):
+        same = request('a.txt', b'alpha\nbeta', 'b.txt', b'alpha\nbeta')
+        self.assertEqual(same.status_code, 200)
+        self.assertEqual(same.json()['status'], 'completed')
+        different = request('a.txt', b'alpha\nbeta', 'b.txt', b'alpha\ngamma')
+        body = different.json()
+        self.assertEqual(body['status'], 'different')
+        self.assertEqual(body['text']['changes'][0]['left_at']['line'], 2)
+
+    def test_large_multiline_document_shows_separate_changes(self):
+        lines = [f'line {i:04d}: value\n' for i in range(400)]
+        changed = lines.copy()
+        changed[12] = 'line 0012: other\n'
+        changed[310] = 'line 0310: other\n'
+        body = request('a.txt', ''.join(lines).encode(), 'b.txt', ''.join(changed).encode()).json()
+        self.assertEqual(body['status'], 'different')
+        positions = [item['left_at']['line'] for item in body['text']['changes']]
+        self.assertIn(13, positions)
+        self.assertIn(311, positions)
+
+    def test_identical_and_different_pixels(self):
+        white = image_bytes()
+        changed = image_bytes(color='lightgray')
+        self.assertEqual(request('a.png', white, 'b.png', white).json()['status'], 'completed')
+        body = request('a.png', white, 'b.png', changed).json()
+        self.assertEqual(body['status'], 'different')
+        self.assertGreater(body['visual']['changed_pixels'], 0)
+
+    def test_image_to_text_uses_ocr_without_claiming_exact_certainty(self):
+        body = request('image.png', image_bytes('HELLO 123'), 'text.txt', b'HELLO 123').json()
+        self.assertEqual(body['status'], 'matched_ocr')
+        self.assertTrue(body['text']['same'])
+
+    def test_unreadable_pdf_text_is_inconclusive(self):
+        def pdf(width):
+            writer = PdfWriter()
+            writer.add_blank_page(width=width, height=200)
+            buffer = io.BytesIO()
+            writer.write(buffer)
+            return buffer.getvalue()
+        self.assertEqual(request('a.pdf', pdf(100), 'b.pdf', pdf(110)).json()['status'], 'inconclusive')
+
+    def test_docx_and_xlsx_extraction(self):
+        doc = Document()
+        doc.add_paragraph('Invoice 42')
+        output = io.BytesIO()
+        doc.save(output)
+        self.assertEqual(request('a.docx', output.getvalue(), 'b.txt', b'Invoice 42').json()['status'], 'completed')
+        book = Workbook()
+        book.active.title = 'Sheet1'
+        book.active['A1'] = 'Total'
+        output = io.BytesIO()
+        book.save(output)
+        self.assertEqual(request('a.xlsx', output.getvalue(), 'b.txt', '[ชีต: Sheet1]\nTotal'.encode()).json()['status'], 'completed')
+
+    def test_rejects_unsupported_and_invalid_input(self):
+        unsupported = request('a.exe', b'123', 'b.txt', b'123')
+        self.assertEqual(unsupported.status_code, 422)
+        self.assertEqual(request('a.txt', b'\xff', 'b.txt', b'abc').status_code, 422)
+        self.assertEqual(request('a.txt', b'', 'b.txt', b'abc').status_code, 422)
+
+
+if __name__ == '__main__':
+    unittest.main()
