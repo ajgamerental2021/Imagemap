@@ -1,10 +1,12 @@
-const supported = new Set(['txt','md','csv','tsv','json','xml','html','htm','yaml','yml','log','py','js','ts','css','sql','pdf','docx','xlsx','png','jpg','jpeg','webp','bmp','gif','tif','tiff']);
+const supported = new Set(['txt','md','csv','tsv','json','xml','html','htm','yaml','yml','log','py','js','ts','css','sql','pdf','docx','xlsx','xlsm','xls','xlsb','png','jpg','jpeg','webp','avif','bmp','gif','tif','tiff']);
 const labels = {completed:'ตรงกันทั้งหมด',different:'พบความแตกต่าง',matched_ocr:'ตรงกันตาม OCR',inconclusive:'ยังสรุปไม่ได้',error:'เกิดข้อผิดพลาด'};
 const $ = id => document.getElementById(id);
 let mode = 'manual';
 let pairs = [];
 let nextId = 1;
 let folderPairs = [];
+const folderSelections = {left:[],right:[]};
+const folderSources = {left:'',right:''};
 let unmatched = {left:0,right:0,unsupported:0};
 
 function fileSupported(file) {
@@ -17,20 +19,21 @@ function createPair() {
 }
 
 function filePicker(pair, side) {
-  const box = document.createElement('label');
+  const box = document.createElement('div');
   box.className = 'file-box';
   const label = document.createElement('span');
   label.className = 'file-label';
   label.textContent = side === 'left' ? 'ไฟล์ต้นฉบับ' : 'ไฟล์ที่ต้องการเทียบ';
   const name = document.createElement('span');
   name.className = 'file-name';
-  name.textContent = pair[side]?.name || 'คลิกเพื่อเลือกไฟล์';
+  name.textContent = pair[side]?.name || 'ยังไม่ได้เลือกไฟล์';
   const input = document.createElement('input');
   input.type = 'file';
+  input.accept = [...supported].map(extension => `.${extension}`).join(',');
   input.setAttribute('aria-label', label.textContent);
   input.addEventListener('change', () => {
     pair[side] = input.files[0] || null;
-    name.textContent = pair[side]?.name || 'คลิกเพื่อเลือกไฟล์';
+    name.textContent = pair[side]?.name || 'ยังไม่ได้เลือกไฟล์';
   });
   box.append(label,name,input);
   return box;
@@ -79,14 +82,19 @@ function relativeName(file) {
 }
 
 function updateFolderPairs() {
-  const leftFiles = Array.from($('left-folder').files || []);
-  const rightFiles = Array.from($('right-folder').files || []);
-  $('left-folder-name').textContent = leftFiles.length ? `${leftFiles[0].webkitRelativePath.split('/')[0]} · ${leftFiles.length} ไฟล์` : 'คลิกเพื่อเลือกโฟลเดอร์';
-  $('right-folder-name').textContent = rightFiles.length ? `${rightFiles[0].webkitRelativePath.split('/')[0]} · ${rightFiles.length} ไฟล์` : 'คลิกเพื่อเลือกโฟลเดอร์';
+  const leftFiles = folderSelections.left;
+  const rightFiles = folderSelections.right;
+  for (const [side,files] of [['left',leftFiles],['right',rightFiles]]) {
+    const source = folderSources[side];
+    const folderName = files[0]?.webkitRelativePath?.split('/')[0];
+    $(`${side}-folder-name`).textContent = files.length
+      ? `${source === 'folder' ? folderName || 'โฟลเดอร์' : 'ไฟล์ที่เลือก'} · ${files.length} ไฟล์`
+      : 'ยังไม่ได้เลือก';
+  }
   folderPairs = [];
   unmatched = {left:0,right:0,unsupported:0};
   if (!leftFiles.length || !rightFiles.length) {
-    $('folder-summary').textContent = 'เลือกทั้งสองโฟลเดอร์เพื่อดูรายการที่จับคู่ได้';
+    $('folder-summary').textContent = 'เลือกข้อมูลทั้งสองฝั่งเพื่อดูรายการที่จับคู่ได้ · ปุ่ม “เลือกโฟลเดอร์” ต้องเลือกโฟลเดอร์ ไม่สามารถเลือกไฟล์เดี่ยวได้';
     return;
   }
   const leftMap = new Map(leftFiles.map(file => [relativeName(file),file]));
@@ -99,6 +107,16 @@ function updateFolderPairs() {
   }
   unmatched.right = Array.from(rightMap.keys()).filter(path => !leftMap.has(path)).length;
   $('folder-summary').textContent = `จับคู่ได้ ${folderPairs.length} คู่ · มีเฉพาะฝั่งต้นฉบับ ${unmatched.left} · มีเฉพาะฝั่งเทียบ ${unmatched.right} · ชนิดไฟล์ที่ไม่รองรับ ${unmatched.unsupported}`;
+}
+
+function selectFolderFiles(side,source,input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  folderSelections[side] = files;
+  folderSources[side] = source;
+  const other = source === 'folder' ? 'files' : 'folder';
+  $(`${side}-${other}`).value = '';
+  updateFolderPairs();
 }
 
 function element(tag,className,text) {
@@ -224,7 +242,10 @@ async function compareAll() {
 $('manual-tab').addEventListener('click',()=>setMode('manual'));
 $('folder-tab').addEventListener('click',()=>setMode('folder'));
 $('add-pair').addEventListener('click',createPair);
-$('left-folder').addEventListener('change',updateFolderPairs);
-$('right-folder').addEventListener('change',updateFolderPairs);
+for (const side of ['left','right']) {
+  $(`${side}-folder`).addEventListener('change',event => selectFolderFiles(side,'folder',event.target));
+  $(`${side}-files`).accept = [...supported].map(extension => `.${extension}`).join(',');
+  $(`${side}-files`).addEventListener('change',event => selectFolderFiles(side,'files',event.target));
+}
 $('compare-button').addEventListener('click',compareAll);
 createPair();

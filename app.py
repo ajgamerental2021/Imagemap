@@ -16,15 +16,17 @@ from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from PIL import Image, ImageChops, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
+from pyxlsb import open_workbook as open_xlsb
 from starlette.concurrency import run_in_threadpool
+from xlrd import open_workbook as open_xls
 
 ROOT = Path(__file__).parent
 MAX_BYTES = 20 * 1024 * 1024
 MAX_TEXT = 200_000
 MAX_IMAGE_PIXELS = 18_000_000
-IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".gif", ".tif", ".tiff"}
 TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".html", ".htm", ".yaml", ".yml", ".log", ".py", ".js", ".ts", ".css", ".sql"}
-DOCUMENT_TYPES = {".pdf", ".docx", ".xlsx"}
+DOCUMENT_TYPES = {".pdf", ".docx", ".xlsx", ".xlsm", ".xls", ".xlsb"}
 SUPPORTED_TYPES = IMAGE_TYPES | TEXT_TYPES | DOCUMENT_TYPES
 
 app = FastAPI(title="Pairwise Compare", docs_url=None, redoc_url=None)
@@ -54,6 +56,14 @@ def kind(filename: str) -> str:
     if suffix in TEXT_TYPES | DOCUMENT_TYPES:
         return "document"
     raise ValueError(f"ไม่รองรับไฟล์ชนิด {suffix or '(ไม่มีนามสกุล)'}")
+
+
+def spreadsheet_value(value) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 async def read_upload(upload: UploadFile) -> bytes:
@@ -94,18 +104,41 @@ def extract_text(filename: str, data: bytes) -> str:
             result = "\n".join(sections)
         except Exception as exc:
             raise ValueError("อ่าน DOCX ไม่สำเร็จ") from exc
-    elif suffix == ".xlsx":
+    elif suffix in {".xlsx", ".xlsm"}:
         try:
             book = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
             sections = []
             for sheet in book:
                 sections.append(f"[ชีต: {sheet.title}]")
                 for row in sheet.iter_rows(values_only=True):
-                    sections.append("\t".join("" if cell is None else str(cell) for cell in row))
+                    sections.append("\t".join(spreadsheet_value(cell) for cell in row))
             book.close()
             result = "\n".join(sections)
         except Exception as exc:
-            raise ValueError("อ่าน XLSX ไม่สำเร็จ") from exc
+            raise ValueError("อ่านไฟล์ Excel ไม่สำเร็จ") from exc
+    elif suffix == ".xls":
+        try:
+            book = open_xls(file_contents=data)
+            sections = []
+            for sheet in book.sheets():
+                sections.append(f"[ชีต: {sheet.name}]")
+                for row_number in range(sheet.nrows):
+                    sections.append("\t".join(spreadsheet_value(cell) for cell in sheet.row_values(row_number)))
+            result = "\n".join(sections)
+        except Exception as exc:
+            raise ValueError("อ่าน XLS ไม่สำเร็จ") from exc
+    elif suffix == ".xlsb":
+        try:
+            sections = []
+            with open_xlsb(io.BytesIO(data)) as book:
+                for name in book.sheets:
+                    sections.append(f"[ชีต: {name}]")
+                    with book.get_sheet(name) as sheet:
+                        for row in sheet.rows():
+                            sections.append("\t".join(spreadsheet_value(cell.v) for cell in row))
+            result = "\n".join(sections)
+        except Exception as exc:
+            raise ValueError("อ่าน XLSB ไม่สำเร็จ") from exc
     else:
         raise ValueError("ไม่รองรับชนิดเอกสารนี้")
     if len(result) > MAX_TEXT:

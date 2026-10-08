@@ -1,13 +1,15 @@
 import io
 import unittest
+from pathlib import Path
 
 from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
+from xlwt import Workbook as LegacyWorkbook
 
-from app import app
+from app import app, extract_text
 
 
 client = TestClient(app)
@@ -59,6 +61,12 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(body['status'], 'different')
         self.assertGreater(body['visual']['changed_pixels'], 0)
 
+    def test_avif_image_upload(self):
+        image = Image.new('RGB', (20, 20), 'white')
+        output = io.BytesIO()
+        image.save(output, format='AVIF')
+        self.assertEqual(request('image.png.avif', output.getvalue(), 'copy.avif', output.getvalue()).json()['status'], 'completed')
+
     def test_image_to_text_uses_ocr_without_claiming_exact_certainty(self):
         body = request('image.png', image_bytes('HELLO 123'), 'text.txt', b'HELLO 123').json()
         self.assertEqual(body['status'], 'matched_ocr')
@@ -85,6 +93,28 @@ class ComparisonTests(unittest.TestCase):
         output = io.BytesIO()
         book.save(output)
         self.assertEqual(request('a.xlsx', output.getvalue(), 'b.txt', '[ชีต: Sheet1]\nTotal'.encode()).json()['status'], 'completed')
+
+    def test_excel_xls_xlsx_and_xlsm_compare_cell_values(self):
+        legacy = LegacyWorkbook()
+        sheet = legacy.add_sheet('Sheet1')
+        sheet.write(0, 0, 'Total')
+        sheet.write(0, 1, 42)
+        xls = io.BytesIO()
+        legacy.save(xls)
+        modern = Workbook()
+        modern.active.title = 'Sheet1'
+        modern.active.append(['Total', 42])
+        xlsx = io.BytesIO()
+        modern.save(xlsx)
+        self.assertEqual(request('old.xls', xls.getvalue(), 'new.xlsx', xlsx.getvalue()).json()['status'], 'completed')
+        self.assertEqual(request('book.xlsm', xlsx.getvalue(), 'old.xls', xls.getvalue()).json()['status'], 'completed')
+
+    def test_xlsb_extracts_sheet_and_cell_values(self):
+        sample = (Path(__file__).parent / 'fixtures' / 'sample.xlsb').read_bytes()
+        content = extract_text('sample.xlsb', sample)
+        self.assertTrue(content.startswith('[ชีต: Test]\nA\tB\tA\tB'))
+        self.assertIn('42.1337', content)
+        self.assertEqual(request('sample.xlsb', sample, 'copy.xlsb', sample).json()['status'], 'completed')
 
     def test_rejects_unsupported_and_invalid_input(self):
         unsupported = request('a.exe', b'123', 'b.txt', b'123')

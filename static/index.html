@@ -32,22 +32,22 @@
         </div>
 
         <div id="manual-panel" class="mode-panel" role="tabpanel">
-          <div class="panel-intro"><strong>คู่เปรียบเทียบ</strong><span>เลือกไฟล์ด้านซ้ายและขวาของแต่ละรายการ</span></div>
+          <div class="panel-intro"><strong>คู่เปรียบเทียบ</strong><span>เลือกไฟล์ด้านซ้ายและขวาของแต่ละรายการ เช่น Excel ↔ Excel หรือ Excel ↔ รูป</span></div>
           <div id="pair-list" class="pair-list"></div>
           <button id="add-pair" type="button" class="add-button"><span>＋</span> เพิ่มคู่เปรียบเทียบ</button>
         </div>
 
         <div id="folder-panel" class="mode-panel hidden" role="tabpanel">
-          <div class="panel-intro"><strong>จับคู่ตามตำแหน่งและชื่อไฟล์</strong><span>เลือกโฟลเดอร์สองฝั่ง ระบบจับคู่ไฟล์ที่มี path ภายในตรงกัน</span></div>
+          <div class="panel-intro"><strong>จับคู่หลายไฟล์</strong><span>เลือกทั้งโฟลเดอร์ หรือเลือกหลายไฟล์จากแต่ละฝั่ง ระบบจับคู่ตาม path หรือชื่อไฟล์</span></div>
           <div class="folder-grid">
-            <label class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">โฟลเดอร์ต้นฉบับ</span><span id="left-folder-name" class="folder-subtitle">คลิกเพื่อเลือกโฟลเดอร์</span><input id="left-folder" type="file" webkitdirectory directory multiple></label>
+            <div class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">ฝั่งต้นฉบับ</span><span id="left-folder-name" class="folder-subtitle">ยังไม่ได้เลือก</span><div class="folder-actions"><label class="folder-action">เลือกหลายไฟล์<input id="left-files" type="file" multiple></label><label class="folder-action secondary">เลือกโฟลเดอร์<input id="left-folder" type="file" webkitdirectory directory multiple></label></div></div>
             <div class="folder-connector">↔</div>
-            <label class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">โฟลเดอร์ที่ต้องการเทียบ</span><span id="right-folder-name" class="folder-subtitle">คลิกเพื่อเลือกโฟลเดอร์</span><input id="right-folder" type="file" webkitdirectory directory multiple></label>
+            <div class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">ฝั่งที่ต้องการเทียบ</span><span id="right-folder-name" class="folder-subtitle">ยังไม่ได้เลือก</span><div class="folder-actions"><label class="folder-action">เลือกหลายไฟล์<input id="right-files" type="file" multiple></label><label class="folder-action secondary">เลือกโฟลเดอร์<input id="right-folder" type="file" webkitdirectory directory multiple></label></div></div>
           </div>
-          <p id="folder-summary" class="folder-summary">เลือกทั้งสองโฟลเดอร์เพื่อดูรายการที่จับคู่ได้</p>
+          <p id="folder-summary" class="folder-summary">เลือกข้อมูลทั้งสองฝั่งเพื่อดูรายการที่จับคู่ได้ · ปุ่ม “เลือกโฟลเดอร์” ต้องเลือกโฟลเดอร์ ไม่สามารถเลือกไฟล์เดี่ยวได้</p>
         </div>
 
-        <div class="action-row"><div class="support-note">รองรับ TXT, CSV, JSON, PDF, DOCX, XLSX และรูปภาพ · สูงสุด 20 MB / ไฟล์</div><button id="compare-button" class="compare-button" type="button">เริ่มเปรียบเทียบ <span>↗</span></button></div>
+        <div class="action-row"><div class="support-note">รองรับ TXT, CSV, JSON, PDF, DOCX, Excel (.xls, .xlsx, .xlsm, .xlsb) และรูปภาพ · สูงสุด 20 MB / ไฟล์</div><button id="compare-button" class="compare-button" type="button">เริ่มเปรียบเทียบ <span>↗</span></button></div>
       </section>
 
       <section id="results-section" class="results-section hidden" aria-labelledby="results-heading">
