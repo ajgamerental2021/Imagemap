@@ -6,6 +6,8 @@
 
 ต้องมี Python 3.12+ และ Tesseract OCR ในเครื่อง
 
+บน Mac ที่ใช้ Homebrew ติดตั้งด้วย `brew install python@3.12 tesseract tesseract-lang` หาก `python3` ยังเป็นรุ่นเก่า ให้ใช้ `python3.12 -m venv .venv` ในคำสั่งด้านล่าง
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
