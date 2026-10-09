@@ -10,3 +10,5 @@
 .folder-action.secondary{background:#243847;border-color:#66818d;color:#dce9ee}
 .folder-action:hover{filter:brightness(1.12)}
 .folder-action input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.drop-hint{display:block;color:#88a2af;font-size:11px;margin-top:8px}
+.file-box.drag-active,.folder-card.drag-active{border-color:#a9f5b4;background:#254738;box-shadow:inset 0 0 0 1px #a9f5b4}

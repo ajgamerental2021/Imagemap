@@ -2,5 +2,6 @@ services:
   - type: web
     name: compare-studio
     runtime: docker
+    branch: compare-studio-deploy
     plan: free
     healthCheckPath: /api/health

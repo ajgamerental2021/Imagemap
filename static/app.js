@@ -18,6 +18,23 @@ function createPair() {
   renderPairs();
 }
 
+function enableDropZone(zone,onFiles) {
+  zone.addEventListener('dragover',event => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    zone.classList.add('drag-active');
+  });
+  zone.addEventListener('dragleave',event => {
+    if (!zone.contains(event.relatedTarget)) zone.classList.remove('drag-active');
+  });
+  zone.addEventListener('drop',event => {
+    event.preventDefault();
+    zone.classList.remove('drag-active');
+    const files = Array.from(event.dataTransfer.files || []);
+    if (files.length) onFiles(files);
+  });
+}
+
 function filePicker(pair, side) {
   const box = document.createElement('div');
   box.className = 'file-box';
@@ -35,7 +52,19 @@ function filePicker(pair, side) {
     pair[side] = input.files[0] || null;
     name.textContent = pair[side]?.name || 'ยังไม่ได้เลือกไฟล์';
   });
-  box.append(label,name,input);
+  const hint = document.createElement('span');
+  hint.className = 'drop-hint';
+  hint.textContent = 'หรือลากไฟล์จาก Finder มาวางที่นี่';
+  box.append(label,name,input,hint);
+  enableDropZone(box,files => {
+    if (files.length !== 1) {
+      alert('ช่องนี้รับไฟล์เดียว กรุณาวางหนึ่งไฟล์ต่อหนึ่งฝั่ง');
+      return;
+    }
+    pair[side] = files[0];
+    name.textContent = files[0].name;
+    input.value = '';
+  });
   return box;
 }
 
@@ -213,6 +242,13 @@ async function compareOne(item) {
 }
 
 async function compareAll() {
+  if (mode === 'manual') {
+    const incomplete = pairs.findIndex(pair => Boolean(pair.left) !== Boolean(pair.right));
+    if (incomplete !== -1) {
+      alert(`คู่ที่ ${incomplete + 1} ยังเลือกไฟล์ไม่ครบทั้งสองฝั่ง`);
+      return;
+    }
+  }
   const items = mode === 'manual' ? pairs.filter(pair => pair.left && pair.right) : folderPairs;
   if (!items.length) {
     alert(mode === 'manual' ? 'กรุณาเลือกไฟล์ทั้งสองฝั่งอย่างน้อยหนึ่งคู่' : 'ไม่พบไฟล์ชื่อเดียวกันในสองโฟลเดอร์');
@@ -246,6 +282,14 @@ for (const side of ['left','right']) {
   $(`${side}-folder`).addEventListener('change',event => selectFolderFiles(side,'folder',event.target));
   $(`${side}-files`).accept = [...supported].map(extension => `.${extension}`).join(',');
   $(`${side}-files`).addEventListener('change',event => selectFolderFiles(side,'files',event.target));
+  const card = $(`${side}-files`).closest('.folder-card');
+  enableDropZone(card,files => {
+    folderSelections[side] = files;
+    folderSources[side] = 'files';
+    $(`${side}-folder`).value = '';
+    $(`${side}-files`).value = '';
+    updateFolderPairs();
+  });
 }
 $('compare-button').addEventListener('click',compareAll);
 createPair();
