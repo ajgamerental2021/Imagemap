@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -106,7 +107,11 @@ def extract_text(filename: str, data: bytes) -> str:
             raise ValueError("ไฟล์นี้ดูเป็นข้อมูลไบนารี ไม่ใช่ข้อความ")
         result = decoded
     elif suffix == ".pdf":
-        result, _ = extract_pdf_text(data)
+        result, scanned, complete = extract_pdf_text(data)
+        if not complete:
+            if len(scanned) > MAX_PDF_OCR_PAGES:
+                raise ValueError(f"PDF มีหน้าสแกนเกิน {MAX_PDF_OCR_PAGES} หน้า กรุณาแบ่งไฟล์ก่อนดึงข้อมูล keyword")
+            raise ValueError("อ่านข้อความจาก PDF สแกนไม่ได้: OCR ไม่พร้อมใช้งาน")
     elif suffix == ".docx":
         try:
             doc = Document(io.BytesIO(data))
@@ -170,6 +175,8 @@ def load_image(data: bytes) -> Image.Image:
 
 def ocr_image(image: Image.Image) -> str | None:
     """Return None if OCR is unavailable, and text (possibly empty) otherwise."""
+    if not shutil.which("tesseract"):
+        return None
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / "image.png"
         image.convert("RGB").save(source)
@@ -179,16 +186,34 @@ def ocr_image(image: Image.Image) -> str | None:
             if (tessdata / "tha.traineddata").is_file():
                 environment["TESSDATA_PREFIX"] = str(tessdata)
             langs = subprocess.run(
-                ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=5, check=True, env=environment
+                ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=15, check=True, env=environment
             ).stdout
             language = "tha+eng" if "tha" in langs.splitlines() else "eng"
             completed = subprocess.run(
                 ["tesseract", str(source), "stdout", "-l", language],
-                capture_output=True, text=True, timeout=30, check=True, env=environment,
+                capture_output=True, text=True, timeout=60, check=True, env=environment,
             )
             return completed.stdout.strip()
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return None
+
+
+@app.get("/api/ocr/status")
+def ocr_status():
+    if not shutil.which("tesseract"):
+        return {"available": False, "reason": "Tesseract executable is missing", "languages": []}
+    environment = os.environ.copy()
+    tessdata = ROOT / ".local" / "tessdata"
+    if (tessdata / "tha.traineddata").is_file():
+        environment["TESSDATA_PREFIX"] = str(tessdata)
+    try:
+        completed = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True,
+                                   timeout=15, check=True, env=environment)
+        languages = [line.strip() for line in completed.stdout.splitlines()
+                     if line.strip() and not line.startswith("List of available languages")]
+        return {"available": bool(languages), "languages": languages}
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        return {"available": False, "reason": type(exc).__name__, "languages": []}
 
 
 def render_pdf_page(document: PdfDocument, index: int, target_scale: float = 2.0) -> Image.Image:
@@ -205,7 +230,7 @@ def render_pdf_page(document: PdfDocument, index: int, target_scale: float = 2.0
         page.close()
 
 
-def extract_pdf_text(data: bytes) -> tuple[str, list[int]]:
+def extract_pdf_text(data: bytes, allow_ocr: bool = True) -> tuple[str, list[int], bool]:
     """Read selectable PDF text and OCR pages that contain only a scan."""
     try:
         reader = PdfReader(io.BytesIO(data))
@@ -220,32 +245,36 @@ def extract_pdf_text(data: bytes) -> tuple[str, list[int]]:
             parts.append(value)
             if not value.strip():
                 scanned.append(index)
-        if len(scanned) > MAX_PDF_OCR_PAGES:
-            raise ValueError(f"PDF มีหน้าสแกนเกิน {MAX_PDF_OCR_PAGES} หน้า กรุณาแบ่งไฟล์ก่อนเปรียบเทียบ")
-        if scanned:
+        ocr_complete = not scanned or (len(scanned) <= MAX_PDF_OCR_PAGES and allow_ocr and shutil.which("tesseract") is not None)
+        if scanned and ocr_complete:
             with PdfDocument(data) as document:
                 for index in scanned:
+                    if not ocr_complete:
+                        break
                     value = ocr_image(render_pdf_page(document, index))
                     if value is None:
-                        raise ValueError("OCR สำหรับ PDF สแกนไม่พร้อมใช้งาน")
+                        ocr_complete = False
+                        break
                     parts[index] = value
         result = "\n".join(parts)
         if len(result) > MAX_TEXT:
             raise ValueError("ข้อความที่ดึงได้ยาวเกิน 200,000 ตัวอักษร")
-        return result, scanned
+        return result, scanned, ocr_complete
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError("อ่าน PDF ไม่สำเร็จ ตรวจว่าไฟล์ไม่เสียหรือมีรหัสผ่าน") from exc
 
 
-def source_comparison_text(filename: str, data: bytes, image: Image.Image | None) -> tuple[str | None, bool, list[int]]:
+def source_comparison_text(filename: str, data: bytes, image: Image.Image | None,
+                           allow_ocr: bool = True) -> tuple[str | None, bool, list[int], bool]:
     if image is not None:
-        return ocr_image(image), True, []
+        value = ocr_image(image) if allow_ocr else None
+        return value, value is not None, [], value is not None
     if Path(filename).suffix.lower() == ".pdf":
-        value, scanned = extract_pdf_text(data)
-        return value, bool(scanned), scanned
-    return extract_text(filename, data), False, []
+        value, scanned, complete = extract_pdf_text(data, allow_ocr=allow_ocr)
+        return value, bool(scanned) and complete, scanned, complete
+    return extract_text(filename, data), False, [], True
 
 
 def pdf_visual_difference(left_data: bytes, right_data: bytes, scanned_pages: list[int]) -> dict:
@@ -348,15 +377,21 @@ def compare_bytes(left_name: str, left_data: bytes, left_kind: str,
                   right_name: str, right_data: bytes, right_kind: str) -> dict:
     """Run parsing and OCR off the async event loop so pairs can progress together."""
     try:
+        both_pdf = Path(left_name).suffix.lower() == Path(right_name).suffix.lower() == ".pdf"
+        if both_pdf and left_data == right_data:
+            return {"status": "completed", "left_kind": left_kind, "right_kind": right_kind,
+                    "visual": None, "pdf_visual": None, "text": None, "spreadsheet": None,
+                    "ocr_available": True, "ocr_language": None, "ocr_used": False,
+                    "ocr_unavailable": False, "binary_identical": True}
         left_image = load_image(left_data) if left_kind == "image" else None
         right_image = load_image(right_data) if right_kind == "image" else None
         visual = visual_difference(left_image, right_image) if left_image and right_image else None
         both_spreadsheets = Path(left_name).suffix.lower() in SPREADSHEET_TYPES and Path(right_name).suffix.lower() in SPREADSHEET_TYPES
         spreadsheet = cell_differences(left_name, left_data, right_name, right_data) if both_spreadsheets else None
-        left_text, left_ocr, left_scanned = (None, False, []) if both_spreadsheets else source_comparison_text(left_name, left_data, left_image)
-        right_text, right_ocr, right_scanned = (None, False, []) if both_spreadsheets else source_comparison_text(right_name, right_data, right_image)
-        text = text_difference(left_text, right_text) if left_text is not None and right_text is not None else None
-        both_pdf = Path(left_name).suffix.lower() == Path(right_name).suffix.lower() == ".pdf"
+        left_text, left_ocr, left_scanned, left_complete = (None, False, [], True) if both_spreadsheets else source_comparison_text(left_name, left_data, left_image)
+        right_text, right_ocr, right_scanned, right_complete = (None, False, [], True) if both_spreadsheets else source_comparison_text(
+            right_name, right_data, right_image, allow_ocr=not (both_pdf and not left_complete))
+        text = text_difference(left_text, right_text) if left_complete and right_complete and left_text is not None and right_text is not None else None
         pdf_visual = pdf_visual_difference(left_data, right_data, sorted(set(left_scanned + right_scanned))) if both_pdf and (left_scanned or right_scanned) else None
         if visual and visual["same"]:
             status = "completed"
@@ -366,6 +401,11 @@ def compare_bytes(left_name: str, left_data: bytes, left_kind: str,
             status = "completed" if spreadsheet["same"] else "different"
         elif pdf_visual and not pdf_visual["same"]:
             status = "different"
+        elif (pdf_visual and pdf_visual["same"] and (not left_complete or not right_complete)
+              and len(pdf_visual["checked_pages"]) == pdf_visual["left_pages"] == pdf_visual["right_pages"]):
+            status = "completed"
+        elif not left_complete or not right_complete:
+            status = "inconclusive"
         elif pdf_visual and pdf_visual["same"] and not left_text and not right_text:
             status = "completed"
         elif left_kind == right_kind == "document" and left_data == right_data:
@@ -380,9 +420,11 @@ def compare_bytes(left_name: str, left_data: bytes, left_kind: str,
             status = "different"
         return {"status": status, "left_kind": left_kind, "right_kind": right_kind,
                 "visual": visual, "pdf_visual": pdf_visual, "text": text, "spreadsheet": spreadsheet,
-                "ocr_available": (left_text is not None and right_text is not None),
+                "ocr_available": left_complete and right_complete,
                 "ocr_language": "tha+eng" if left_ocr or right_ocr else None,
-                "ocr_used": left_ocr or right_ocr}
+                "ocr_used": left_ocr or right_ocr,
+                "ocr_unavailable": not left_complete or not right_complete,
+                "binary_identical": False}
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -426,11 +468,15 @@ def report_bytes(left_name: str, left_data: bytes, right_name: str, right_data: 
             visual = visual_difference(left_image, right_image)
             writer.writerow(["รูปภาพ", "ขนาด / พิกเซลต่าง", str(visual["left_size"]), str(visual["right_size"]),
                              visual["changed_pixels"], visual["bounds"]])
-        left_text, _, left_scanned = source_comparison_text(left_name, left_data, left_image)
-        right_text, _, right_scanned = source_comparison_text(right_name, right_data, right_image)
-        if left_text is not None and right_text is not None:
+        left_text, _, left_scanned, left_complete = source_comparison_text(left_name, left_data, left_image)
+        both_pdf = Path(left_name).suffix.lower() == Path(right_name).suffix.lower() == ".pdf"
+        right_text, _, right_scanned, right_complete = source_comparison_text(
+            right_name, right_data, right_image, allow_ocr=not (both_pdf and not left_complete))
+        if left_complete and right_complete and left_text is not None and right_text is not None:
             writer.writerows(line_report_rows(left_text, right_text))
-        if Path(left_name).suffix.lower() == Path(right_name).suffix.lower() == ".pdf" and (left_scanned or right_scanned):
+        if not left_complete or not right_complete:
+            writer.writerow(["OCR", "ไม่พร้อมใช้งานหรือหมดเวลา", "", "", "", ""])
+        if both_pdf and (left_scanned or right_scanned):
             visual = pdf_visual_difference(left_data, right_data, sorted(set(left_scanned + right_scanned)))
             if visual["left_pages"] != visual["right_pages"]:
                 writer.writerow(["PDF จำนวนหน้า", "", visual["left_pages"], visual["right_pages"], "", ""])

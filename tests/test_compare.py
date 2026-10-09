@@ -88,6 +88,22 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(result['status'], 'different')
         self.assertIsNone(result['pdf_visual']['changes'][0]['changed_pixels'])
 
+    def test_scanned_pdf_over_ocr_page_limit_still_compares_all_pages(self):
+        def pdf(last_width):
+            writer = PdfWriter()
+            for _ in range(30):
+                writer.add_blank_page(width=72, height=72)
+            writer.add_blank_page(width=last_width, height=72)
+            buffer = io.BytesIO()
+            writer.write(buffer)
+            return buffer.getvalue()
+
+        result = request('left.pdf', pdf(72), 'right.pdf', pdf(80)).json()
+        self.assertEqual(result['status'], 'different')
+        self.assertTrue(result['ocr_unavailable'])
+        self.assertEqual(result['pdf_visual']['changes'][0]['page'], 31)
+        self.assertEqual(len(result['pdf_visual']['checked_pages']), 31)
+
     def test_text_pdf_and_scanned_pdf_compare(self):
         def text_pdf(value):
             output = io.BytesIO()
@@ -118,9 +134,10 @@ class ComparisonTests(unittest.TestCase):
         matching = request('scan1.pdf', scanned_pdf('HELLO 123'), 'scan2.pdf', scanned_pdf('HELLO 123'))
         self.assertEqual(matching.json()['status'], 'matched_ocr')
 
-        def graphic_pdf(gray):
+        def graphic_pdf(gray, title=""):
             output = io.BytesIO()
             page = canvas.Canvas(output, pagesize=(220, 120))
+            page.setTitle(title)
             page.setFillGray(gray)
             page.rect(20, 20, 70, 60, stroke=0, fill=1)
             page.save()
@@ -133,6 +150,29 @@ class ComparisonTests(unittest.TestCase):
             'left': ('graphic-left.pdf', graphic_left), 'right': ('graphic-right.pdf', graphic_right),
         })
         self.assertIn('PDF ภาพสแกน', report.content.decode('utf-8-sig'))
+
+        with patch('app.ocr_image', return_value=None) as unavailable:
+            identical = request('same-left.pdf', graphic_left, 'same-right.pdf', graphic_left).json()
+            self.assertEqual(identical['status'], 'completed')
+            self.assertTrue(identical['binary_identical'])
+            unavailable.assert_not_called()
+            different = request('graphic-left.pdf', graphic_left, 'graphic-right.pdf', graphic_right).json()
+            self.assertEqual(different['status'], 'different')
+            self.assertTrue(different['ocr_unavailable'])
+            self.assertEqual(different['pdf_visual']['changes'][0]['page'], 1)
+            visually_same = request('v1.pdf', graphic_pdf(0, 'v1'), 'v2.pdf', graphic_pdf(0, 'v2')).json()
+            self.assertEqual(visually_same['status'], 'completed')
+            self.assertTrue(visually_same['pdf_visual']['same'])
+            cross_type = request('graphic-left.pdf', graphic_left, 'text.txt', b'Example').json()
+            self.assertEqual(cross_type['status'], 'inconclusive')
+            report = client.post('/api/compare/report', files={
+                'left': ('graphic-left.pdf', graphic_left), 'right': ('graphic-right.pdf', graphic_right),
+            })
+            self.assertIn('PDF ภาพสแกน', report.content.decode('utf-8-sig'))
+        with patch('app.shutil.which', return_value=None) as binary:
+            self.assertEqual(request('scan-left.pdf', graphic_left, 'scan-right.pdf', graphic_right).json()['status'], 'different')
+            self.assertEqual(client.get('/api/ocr/status').json()['available'], False)
+            binary.assert_called()
 
     def test_docx_and_xlsx_extraction(self):
         doc = Document()

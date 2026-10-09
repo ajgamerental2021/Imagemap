@@ -281,9 +281,10 @@ function renderResult(item,index) {
   if (result.status === 'error') {
     detailParagraph(detail,result.message,'error-message');
   } else {
-    if (result.status === 'completed') detailParagraph(detail,'ข้อมูลที่ตรวจเปรียบเทียบตรงกันทั้งหมด');
+    if (result.status === 'completed') detailParagraph(detail,result.binary_identical ? 'ไฟล์ PDF ทั้งสองฝั่งเหมือนกันทุกไบต์' : result.ocr_unavailable ? 'ภาพทุกหน้าที่ตรวจตรงกัน แม้ OCR ยังอ่านข้อความในหน้าสแกนไม่ได้' : 'ข้อมูลที่ตรวจเปรียบเทียบตรงกันทั้งหมด');
     if (result.status === 'matched_ocr') detailParagraph(detail,'ข้อความที่ OCR อ่านจากรูปหรือ PDF สแกนตรงกันตามที่อ่านได้ แต่ OCR อาจอ่านผิดหรือข้ามข้อความ');
-    if (result.status === 'inconclusive') detailParagraph(detail,'ไม่พบข้อความที่อ่านได้เพียงพอสำหรับยืนยันความตรงกัน อาจเป็นเอกสารสแกนหรือรูปที่ OCR อ่านไม่ได้');
+    if (result.status === 'inconclusive') detailParagraph(detail,result.ocr_unavailable ? 'OCR ไม่พร้อมใช้งานหรือหมดเวลา จึงยืนยันข้อความจากหน้าสแกนเทียบกับไฟล์อีกชนิดไม่ได้' : 'ไม่พบข้อความที่อ่านได้เพียงพอสำหรับยืนยันความตรงกัน อาจเป็นเอกสารสแกนหรือรูปที่ OCR อ่านไม่ได้');
+    if (result.ocr_unavailable && result.pdf_visual && result.status === 'different') detailParagraph(detail,'OCR ไม่พร้อมใช้งานหรือหมดเวลา แต่ตรวจพบความต่างจากภาพหน้าสแกนของ PDF');
     if (result.ocr_used && result.status === 'different') detailParagraph(detail,'มีการอ่านรูปหรือ PDF สแกนด้วย OCR โปรดตรวจข้อมูลที่ต่างกับไฟล์ต้นฉบับอีกครั้ง');
     if (result.visual) {
       const v = result.visual;
@@ -444,7 +445,8 @@ async function compareAll() {
       $('results-list').replaceChildren(...results.map((entry,i) => entry ? renderResult(entry,i) : null).filter(Boolean));
     }
   };
-  await Promise.all(Array.from({length:Math.min(3,items.length)},worker));
+  const containsPdf = items.some(item => [item.left.name,item.right.name].some(name => name.toLowerCase().endsWith('.pdf')));
+  await Promise.all(Array.from({length:Math.min(containsPdf ? 1 : 3,items.length)},worker));
   button.disabled = false;
   button.firstChild.textContent = 'เริ่มเปรียบเทียบ ';
   $('results-section').scrollIntoView({behavior:'smooth',block:'start'});
