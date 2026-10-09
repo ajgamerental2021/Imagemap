@@ -1,6 +1,9 @@
 import io
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from docx import Document
 from fastapi.testclient import TestClient
@@ -108,6 +111,49 @@ class ComparisonTests(unittest.TestCase):
         modern.save(xlsx)
         self.assertEqual(request('old.xls', xls.getvalue(), 'new.xlsx', xlsx.getvalue()).json()['status'], 'completed')
         self.assertEqual(request('book.xlsm', xlsx.getvalue(), 'old.xls', xls.getvalue()).json()['status'], 'completed')
+
+    def test_excel_reports_exact_cells_and_full_csv(self):
+        def workbook(values):
+            book = Workbook()
+            book.active.title = 'Orders'
+            for row in values:
+                book.active.append(row)
+            output = io.BytesIO()
+            book.save(output)
+            return output.getvalue()
+        left = workbook([['Item', 'Amount'], ['A', 10], ['B', 20]])
+        right = workbook([['Item', 'Amount'], ['A', 11], ['B', None], ['C', 30]])
+        result = request('left.xlsx', left, 'right.xlsx', right).json()
+        self.assertEqual(result['status'], 'different')
+        self.assertEqual(result['spreadsheet']['total_changes'], 4)
+        self.assertEqual([change['cell'] for change in result['spreadsheet']['changes']], ['B2', 'B3', 'A4', 'B4'])
+        report = client.post('/api/compare/report', files={
+            'left': ('left.xlsx', left), 'right': ('right.xlsx', right),
+        })
+        self.assertEqual(report.status_code, 200)
+        self.assertIn('B2', report.content.decode('utf-8-sig'))
+        self.assertIn('B4', report.content.decode('utf-8-sig'))
+
+    def test_local_folder_mode_reads_files_without_upload(self):
+        local_client = TestClient(app, client=('127.0.0.1', 50000))
+        with tempfile.TemporaryDirectory() as directory:
+            left = Path(directory) / 'original'
+            right = Path(directory) / 'revised'
+            left.mkdir(); right.mkdir()
+            (left / 'item.txt').write_text('old', encoding='utf-8')
+            (right / 'item.txt').write_text('new', encoding='utf-8')
+            payload = {'left_path': str(left), 'right_path': str(right)}
+            self.assertEqual(local_client.post('/api/local/list', json=payload).status_code, 403)
+            with patch.dict(os.environ, {'LOCAL_FOLDER_ACCESS': '1'}):
+                listing = local_client.post('/api/local/list', json=payload)
+                self.assertEqual(listing.status_code, 200)
+                self.assertEqual(len(listing.json()['pairs']), 1)
+                pair = listing.json()['pairs'][0]
+                comparison = local_client.post('/api/local/compare', json=pair)
+                self.assertEqual(comparison.status_code, 200)
+                self.assertEqual(comparison.json()['status'], 'different')
+                report = local_client.post('/api/local/report', json=pair)
+                self.assertIn('old', report.content.decode('utf-8-sig'))
 
     def test_xlsb_extracts_sheet_and_cell_values(self):
         sample = (Path(__file__).parent / 'fixtures' / 'sample.xlsb').read_bytes()

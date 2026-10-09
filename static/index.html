@@ -8,6 +8,7 @@
   <title>Compare Studio — เปรียบเทียบไฟล์และรูป</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/app.js" defer></script>
+  <script src="/static/generator.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -28,7 +29,8 @@
         <div class="section-head"><div><span class="step">01 / INPUT</span><h2 id="workspace-heading">เลือกข้อมูลที่จะเปรียบเทียบ</h2></div><span class="section-note">ไฟล์ไม่ถูกบันทึกบนเซิร์ฟเวอร์</span></div>
         <div class="mode-tabs" role="tablist" aria-label="วิธีเลือกไฟล์">
           <button id="manual-tab" class="mode-tab active" role="tab" aria-selected="true" type="button">จับคู่ไฟล์เอง</button>
-          <button id="folder-tab" class="mode-tab" role="tab" aria-selected="false" type="button">จับคู่จาก 2 โฟลเดอร์</button>
+          <button id="folder-tab" class="mode-tab" role="tab" aria-selected="false" type="button">เลือกไฟล์จาก 2 โฟลเดอร์</button>
+          <button id="local-tab" class="mode-tab hidden" role="tab" aria-selected="false" type="button">อ่านโฟลเดอร์บนเครื่อง</button>
         </div>
 
         <div id="manual-panel" class="mode-panel" role="tabpanel">
@@ -38,13 +40,22 @@
         </div>
 
         <div id="folder-panel" class="mode-panel hidden" role="tabpanel">
-          <div class="panel-intro"><strong>จับคู่หลายไฟล์</strong><span>เลือกทั้งโฟลเดอร์ หรือเลือกหลายไฟล์จากแต่ละฝั่ง ระบบจับคู่ตาม path หรือชื่อไฟล์</span></div>
+          <div class="panel-intro"><strong>จับคู่หลายไฟล์</strong><span>โหมดนี้เบราว์เซอร์จะส่งไฟล์ที่เลือกให้เซิร์ฟเวอร์ · ระบบจับคู่ตาม path หรือชื่อไฟล์</span></div>
           <div class="folder-grid">
             <div class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">ฝั่งต้นฉบับ</span><span id="left-folder-name" class="folder-subtitle">ยังไม่ได้เลือก</span><div class="folder-actions"><label class="folder-action">เลือกหลายไฟล์<input id="left-files" type="file" multiple></label><label class="folder-action secondary">เลือกโฟลเดอร์<input id="left-folder" type="file" webkitdirectory directory multiple></label></div><span class="drop-hint">หรือลากหลายไฟล์มาวาง</span></div>
             <div class="folder-connector">↔</div>
             <div class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">ฝั่งที่ต้องการเทียบ</span><span id="right-folder-name" class="folder-subtitle">ยังไม่ได้เลือก</span><div class="folder-actions"><label class="folder-action">เลือกหลายไฟล์<input id="right-files" type="file" multiple></label><label class="folder-action secondary">เลือกโฟลเดอร์<input id="right-folder" type="file" webkitdirectory directory multiple></label></div><span class="drop-hint">หรือลากหลายไฟล์มาวาง</span></div>
           </div>
           <p id="folder-summary" class="folder-summary">เลือกข้อมูลทั้งสองฝั่งเพื่อดูรายการที่จับคู่ได้ · ปุ่ม “เลือกโฟลเดอร์” ต้องเลือกโฟลเดอร์ ไม่สามารถเลือกไฟล์เดี่ยวได้</p>
+        </div>
+
+        <div id="local-panel" class="mode-panel hidden" role="tabpanel">
+          <div class="panel-intro"><strong>อ่านจาก path บนเครื่องที่รันเซิร์ฟเวอร์</strong><span>ไม่ส่งไฟล์ผ่านเบราว์เซอร์ · ใช้ได้เมื่อรันแอปบน Mac และเปิด LOCAL_FOLDER_ACCESS=1 เท่านั้น</span></div>
+          <div class="local-grid">
+            <label>โฟลเดอร์ต้นฉบับ<span class="path-control"><input id="local-left" type="text" placeholder="/Users/yourname/Documents/original" autocomplete="off"><button type="button" class="path-picker hidden" data-pick-path="local-left">เลือกโฟลเดอร์</button></span></label>
+            <label>โฟลเดอร์ที่ต้องการเทียบ<span class="path-control"><input id="local-right" type="text" placeholder="/Users/yourname/Documents/revised" autocomplete="off"><button type="button" class="path-picker hidden" data-pick-path="local-right">เลือกโฟลเดอร์</button></span></label>
+          </div>
+          <p id="local-summary" class="folder-summary">วาง path ของสองโฟลเดอร์ แล้วกดเริ่มเปรียบเทียบ · ใน Finder ใช้ Option+Command+C เพื่อคัดลอก path</p>
         </div>
 
         <div class="action-row"><div class="support-note">รองรับ TXT, CSV, JSON, PDF, DOCX, Excel (.xls, .xlsx, .xlsm, .xlsb) และรูปภาพ · สูงสุด 20 MB / ไฟล์</div><button id="compare-button" class="compare-button" type="button">เริ่มเปรียบเทียบ <span>↗</span></button></div>
@@ -54,6 +65,41 @@
         <div class="section-head"><div><span class="step">02 / RESULTS</span><h2 id="results-heading">ผลการเปรียบเทียบ</h2></div><span id="result-count" class="result-count"></span></div>
         <div id="summary-cards" class="summary-cards"></div>
         <div id="results-list" class="results-list"></div>
+      </section>
+
+      <section class="workspace generator" aria-labelledby="generator-heading">
+        <div class="section-head"><div><span class="step">03 / GENERATE</span><h2 id="generator-heading">สร้างเอกสารจากข้อมูลหลายไฟล์</h2></div><span class="section-note">ข้อมูลอยู่ในหน่วยความจำระหว่างใช้งานหน้านี้</span></div>
+        <div class="generator-grid">
+          <div class="generator-step">
+            <h3>1. ระบุ keyword และแหล่งข้อมูล</h3>
+            <p>ใส่ชื่อข้อมูลที่ต้องค้นหา บรรทัดละหนึ่งคำ เช่น ชื่อลูกค้า หรือ เลขที่ใบสั่งซื้อ ระบบดึงค่าที่อยู่หลัง <code>:</code>, <code>=</code> หรือในเซลล์ขวา/ล่างของ Excel</p>
+            <textarea id="gen-keywords" rows="5" placeholder="ชื่อลูกค้า&#10;เลขที่ใบสั่งซื้อ&#10;ยอดรวม"></textarea>
+            <label class="generator-label">เลือกไฟล์ข้อมูลหลายไฟล์<input id="gen-sources" type="file" multiple></label>
+            <div id="gen-local-source" class="hidden"><label class="generator-label">หรือระบุ path โฟลเดอร์บนเครื่องที่รันเว็บ<span class="path-control"><input id="gen-source-path" type="text" placeholder="/Users/yourname/Documents/data"><button type="button" class="path-picker hidden" data-pick-path="gen-source-path">เลือกโฟลเดอร์</button></span></label></div>
+            <button id="gen-extract" type="button" class="generator-button">อ่านข้อมูลจากไฟล์</button>
+            <p id="gen-source-status" class="generator-status" role="status">เลือกไฟล์หรือโฟลเดอร์ และกำหนด keyword ก่อนเริ่ม</p>
+            <div id="gen-hits" class="keyword-results"></div>
+          </div>
+          <div class="generator-step">
+            <h3>2. เลือก template</h3>
+            <div class="template-tabs"><label><input type="radio" name="template-mode" value="web" checked> ออกแบบบนเว็บ</label><label><input type="radio" name="template-mode" value="file"> ใช้ไฟล์ template</label></div>
+            <div id="gen-web-template">
+              <div class="generator-pair"><label>ชื่อเอกสาร<input id="gen-title" type="text" value="สรุปข้อมูล {{ชื่อลูกค้า}}"></label><label>สีหลัก<input id="gen-accent" type="color" value="#a9f5b4"></label></div>
+              <label class="generator-label">ขนาดตัวอักษร<input id="gen-font-size" type="number" min="9" max="22" value="12"></label>
+              <div id="gen-blocks" class="design-blocks"></div>
+              <div class="block-actions"><button type="button" data-add-block="heading">+ หัวข้อ</button><button type="button" data-add-block="paragraph">+ ข้อความ</button><button type="button" data-add-block="field">+ ช่องข้อมูล</button><button type="button" data-add-block="divider">+ เส้นคั่น</button></div>
+              <div class="generator-pair"><button id="gen-save-template" type="button" class="quiet-button">บันทึกแบบเป็น JSON</button><label class="quiet-button">เปิดแบบ JSON<input id="gen-load-template" type="file" accept=".json,application/json"></label></div>
+              <div id="gen-preview" class="document-preview"></div>
+              <label class="generator-label">ชนิดไฟล์ผลลัพธ์<select id="gen-format"><option value="docx">Word (.docx)</option><option value="xlsx">Excel (.xlsx)</option><option value="pdf">PDF (.pdf)</option></select></label>
+            </div>
+            <div id="gen-file-template" class="hidden">
+              <label class="generator-label">ไฟล์ template DOCX, XLSX, XLSM หรือ PDF แบบฟอร์ม<input id="gen-template-file" type="file" accept=".docx,.xlsx,.xlsm,.pdf"></label>
+              <p>วาง <code>{{keyword}}</code> ใน Word/Excel หรือสร้าง PDF แบบฟอร์มที่ชื่อช่องตรงกับ keyword ใช้ <code>{{keyword:first}}</code>, <code>{{keyword:last}}</code>, <code>{{keyword:count}}</code> ได้ใน Word/Excel</p>
+            </div>
+            <button id="gen-generate" type="button" class="generator-button primary">สร้างและดาวน์โหลดเอกสาร</button>
+            <p id="gen-generate-status" class="generator-status" role="status">ระบบจะรวมทุกค่าที่พบภายใต้ keyword เดียวกันตามลำดับไฟล์</p>
+          </div>
+        </div>
       </section>
     </main>
 

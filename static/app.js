@@ -99,7 +99,8 @@ function setMode(value) {
   mode = value;
   $('manual-panel').classList.toggle('hidden',value !== 'manual');
   $('folder-panel').classList.toggle('hidden',value !== 'folder');
-  for (const tab of ['manual','folder']) {
+  $('local-panel').classList.toggle('hidden',value !== 'local');
+  for (const tab of ['manual','folder','local']) {
     $(`${tab}-tab`).classList.toggle('active',tab === value);
     $(`${tab}-tab`).setAttribute('aria-selected',String(tab === value));
   }
@@ -175,6 +176,42 @@ function detailParagraph(container,text,className='') {
   container.append(element('p',className,text));
 }
 
+async function downloadReport(item,button) {
+  button.disabled = true;
+  button.textContent = 'กำลังสร้างรายงาน...';
+  try {
+    let response;
+    if (item.local) {
+      response = await fetch('/api/local/report',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({left_path:item.left_path,right_path:item.right_path})
+      });
+    } else {
+      const form = new FormData();
+      form.append('left',item.left);
+      form.append('right',item.right);
+      response = await fetch('/api/compare/report',{method:'POST',body:form});
+    }
+    if (!response.ok) {
+      const body = await response.json();
+      throw new Error(body.detail || `HTTP ${response.status}`);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `comparison-${(item.name || item.left.name).replace(/[^\w.-]+/g,'_')}.csv`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+  } catch (error) {
+    alert(error.message || 'ดาวน์โหลดรายงานไม่สำเร็จ');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'ดาวน์โหลดรายงานความต่างทั้งหมด (.csv)';
+  }
+}
+
 function renderResult(item,index) {
   const result = item.result;
   const card = element('article','result-card');
@@ -194,6 +231,38 @@ function renderResult(item,index) {
     if (result.visual) {
       const v = result.visual;
       detailParagraph(detail,`ภาพ: ${v.left_size.join(' × ')} ↔ ${v.right_size.join(' × ')} พิกเซล · ${v.same ? 'พิกเซลตรงกันทั้งหมด' : v.changed_pixels === null ? 'ขนาดภาพต่างกัน' : `${v.changed_pixels.toLocaleString()} พิกเซลต่างกัน`}`);
+      if (v.bounds) detailParagraph(detail,`กรอบบริเวณพิกเซลที่ต่าง: ซ้าย ${v.bounds[0]}, บน ${v.bounds[1]}, ขวา ${v.bounds[2]}, ล่าง ${v.bounds[3]}`);
+    }
+    if (result.spreadsheet) {
+      const sheet = result.spreadsheet;
+      detailParagraph(detail,`ตรวจเซลล์ที่มีข้อมูล: ${sheet.left_cells.toLocaleString()} ↔ ${sheet.right_cells.toLocaleString()} · พบเซลล์ต่างกัน ${sheet.total_changes.toLocaleString()} ตำแหน่ง`,'spreadsheet-summary');
+      sheet.sheet_changes.forEach(change => detailParagraph(detail,`ชีต “${change.sheet}” มีเฉพาะ${change.side === 'left' ? 'ฝั่งต้นฉบับ' : 'ฝั่งเทียบ'}`,'sheet-diff'));
+      if (sheet.changes.length) {
+        const list = element('div','cell-list');
+        let shown = 0;
+        const showMore = () => {
+          sheet.changes.slice(shown,shown+50).forEach(change => {
+            const cell = element('div','cell-change');
+            cell.append(element('div','cell-location',`${change.sheet} · ${change.cell} · ${change.type === 'added' ? 'เพิ่ม' : change.type === 'removed' ? 'ลบ' : 'แก้ไข'}`));
+            const columns = element('div','cell-values');
+            for (const [label,value] of [['ต้นฉบับ',change.left],['ฝั่งเทียบ',change.right]]) {
+              const side = element('div','');
+              side.append(element('label','',label),element('pre','',value || '∅ ไม่มีข้อมูล'));
+              columns.append(side);
+            }
+            cell.append(columns);
+            list.append(cell);
+          });
+          shown = Math.min(shown+50,sheet.changes.length);
+          more.classList.toggle('hidden',shown >= sheet.changes.length);
+        };
+        const more = element('button','report-button','แสดงอีก 50 ตำแหน่ง');
+        more.type = 'button';
+        more.addEventListener('click',showMore);
+        detail.append(list,more);
+        showMore();
+        if (sheet.preview_limited) detailParagraph(detail,'หน้าเว็บแสดง 500 ตำแหน่งแรก ดาวน์โหลด CSV เพื่อดูความต่างทุกเซลล์');
+      }
     }
     if (result.text) {
       const t = result.text;
@@ -220,12 +289,33 @@ function renderResult(item,index) {
     if ((result.left_kind === 'image' || result.right_kind === 'image') && !result.ocr_available) {
       detailParagraph(detail,'OCR ไม่พร้อมใช้งาน จึงไม่มีผลเทียบข้อความในรูป');
     }
+    if (result.status === 'different') {
+      const actions = element('div','report-actions');
+      const report = element('button','report-button','ดาวน์โหลดรายงานความต่างทั้งหมด (.csv)');
+      report.type = 'button';
+      report.addEventListener('click',()=>downloadReport(item,report));
+      actions.append(report);
+      detail.append(actions);
+    }
   }
   card.append(detail);
   return card;
 }
 
 async function compareOne(item) {
+  if (item.local) {
+    try {
+      const response = await fetch('/api/local/compare',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({left_path:item.left_path,right_path:item.right_path})
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+      return {...item,result:body};
+    } catch (error) {
+      return {...item,result:{status:'error',message:error.message || 'อ่านไฟล์ในโฟลเดอร์ไม่ได้'}};
+    }
+  }
   if (!fileSupported(item.left) || !fileSupported(item.right)) return {...item,result:{status:'error',message:'ชนิดไฟล์ไม่รองรับ'}};
   if (item.left.size > 20*1024*1024 || item.right.size > 20*1024*1024) return {...item,result:{status:'error',message:'ไฟล์ใหญ่เกิน 20 MB'}};
   const form = new FormData();
@@ -249,9 +339,32 @@ async function compareAll() {
       return;
     }
   }
-  const items = mode === 'manual' ? pairs.filter(pair => pair.left && pair.right) : folderPairs;
+  let items;
+  if (mode === 'local') {
+    const left_path = $('local-left').value.trim();
+    const right_path = $('local-right').value.trim();
+    if (!left_path || !right_path) {
+      alert('กรุณาใส่ path ของโฟลเดอร์ทั้งสองฝั่ง');
+      return;
+    }
+    try {
+      const response = await fetch('/api/local/list',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({left_path,right_path})
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+      items = body.pairs.map(pair => ({...pair,local:true,left:{name:pair.left_name},right:{name:pair.right_name}}));
+      $('local-summary').textContent = `จับคู่ได้ ${items.length} คู่ · เฉพาะฝั่งต้นฉบับ ${body.left_only} · เฉพาะฝั่งเทียบ ${body.right_only} · อ่านไฟล์จากเครื่องโดยตรง`;
+    } catch (error) {
+      $('local-summary').textContent = error.message || 'อ่านโฟลเดอร์ไม่ได้';
+      return;
+    }
+  } else {
+    items = mode === 'manual' ? pairs.filter(pair => pair.left && pair.right) : folderPairs;
+  }
   if (!items.length) {
-    alert(mode === 'manual' ? 'กรุณาเลือกไฟล์ทั้งสองฝั่งอย่างน้อยหนึ่งคู่' : 'ไม่พบไฟล์ชื่อเดียวกันในสองโฟลเดอร์');
+    alert(mode === 'manual' ? 'กรุณาเลือกไฟล์ทั้งสองฝั่งอย่างน้อยหนึ่งคู่' : 'ไม่พบไฟล์ที่ path หรือชื่อเดียวกันในสองโฟลเดอร์');
     return;
   }
   const button = $('compare-button');
@@ -277,6 +390,7 @@ async function compareAll() {
 
 $('manual-tab').addEventListener('click',()=>setMode('manual'));
 $('folder-tab').addEventListener('click',()=>setMode('folder'));
+$('local-tab').addEventListener('click',()=>setMode('local'));
 $('add-pair').addEventListener('click',createPair);
 for (const side of ['left','right']) {
   $(`${side}-folder`).addEventListener('change',event => selectFolderFiles(side,'folder',event.target));
@@ -292,4 +406,7 @@ for (const side of ['left','right']) {
   });
 }
 $('compare-button').addEventListener('click',compareAll);
+fetch('/api/capabilities').then(response=>response.json()).then(data=>{
+  if (data.local_folder_access) $('local-tab').classList.remove('hidden');
+}).catch(()=>{});
 createPair();

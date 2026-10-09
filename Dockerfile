@@ -12,6 +12,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./
+COPY document_data.py keyword_engine.py generation.py ./
+COPY assets ./assets
 COPY static ./static
 
 RUN useradd --system --uid 10001 --create-home appuser \
