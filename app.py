@@ -7,9 +7,11 @@ import csv
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+from math import sqrt
 from itertools import accumulate
 from itertools import zip_longest
 from pathlib import Path
@@ -20,6 +22,7 @@ from fastapi.responses import FileResponse, Response
 from openpyxl import load_workbook
 from PIL import Image, ImageChops, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
+from pypdfium2 import PdfDocument
 from pyxlsb import open_workbook as open_xlsb
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -33,6 +36,8 @@ ROOT = Path(__file__).parent
 MAX_BYTES = 20 * 1024 * 1024
 MAX_TEXT = 200_000
 MAX_IMAGE_PIXELS = 18_000_000
+MAX_PDF_PAGES = 100
+MAX_PDF_OCR_PAGES = 30
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".gif", ".tif", ".tiff"}
 TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".html", ".htm", ".yaml", ".yml", ".log", ".py", ".js", ".ts", ".css", ".sql"}
 DOCUMENT_TYPES = {".pdf", ".docx", ".xlsx", ".xlsm", ".xls", ".xlsb"}
@@ -101,15 +106,7 @@ def extract_text(filename: str, data: bytes) -> str:
             raise ValueError("ไฟล์นี้ดูเป็นข้อมูลไบนารี ไม่ใช่ข้อความ")
         result = decoded
     elif suffix == ".pdf":
-        try:
-            reader = PdfReader(io.BytesIO(data))
-            if len(reader.pages) > 100:
-                raise ValueError("PDF มีเกิน 100 หน้า")
-            result = "\n".join(page.extract_text() or "" for page in reader.pages)
-        except ValueError:
-            raise
-        except Exception as exc:
-            raise ValueError("อ่าน PDF ไม่สำเร็จ") from exc
+        result, _ = extract_pdf_text(data)
     elif suffix == ".docx":
         try:
             doc = Document(io.BytesIO(data))
@@ -192,6 +189,77 @@ def ocr_image(image: Image.Image) -> str | None:
             return completed.stdout.strip()
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return None
+
+
+def render_pdf_page(document: PdfDocument, index: int, target_scale: float = 2.0) -> Image.Image:
+    page = document[index]
+    try:
+        width, height = page.get_size()
+        scale = min(target_scale, sqrt(MAX_IMAGE_PIXELS / max(width * height, 1)))
+        bitmap = page.render(scale=scale)
+        try:
+            return bitmap.to_pil().convert("RGBA")
+        finally:
+            bitmap.close()
+    finally:
+        page.close()
+
+
+def extract_pdf_text(data: bytes) -> tuple[str, list[int]]:
+    """Read selectable PDF text and OCR pages that contain only a scan."""
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise ValueError("PDF มีรหัสผ่าน กรุณาปลดล็อกก่อนเปรียบเทียบ")
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise ValueError(f"PDF มีเกิน {MAX_PDF_PAGES} หน้า")
+        parts = []
+        scanned = []
+        for index, page in enumerate(reader.pages):
+            value = page.extract_text() or ""
+            parts.append(value)
+            if not value.strip():
+                scanned.append(index)
+        if len(scanned) > MAX_PDF_OCR_PAGES:
+            raise ValueError(f"PDF มีหน้าสแกนเกิน {MAX_PDF_OCR_PAGES} หน้า กรุณาแบ่งไฟล์ก่อนเปรียบเทียบ")
+        if scanned:
+            with PdfDocument(data) as document:
+                for index in scanned:
+                    value = ocr_image(render_pdf_page(document, index))
+                    if value is None:
+                        raise ValueError("OCR สำหรับ PDF สแกนไม่พร้อมใช้งาน")
+                    parts[index] = value
+        result = "\n".join(parts)
+        if len(result) > MAX_TEXT:
+            raise ValueError("ข้อความที่ดึงได้ยาวเกิน 200,000 ตัวอักษร")
+        return result, scanned
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("อ่าน PDF ไม่สำเร็จ ตรวจว่าไฟล์ไม่เสียหรือมีรหัสผ่าน") from exc
+
+
+def source_comparison_text(filename: str, data: bytes, image: Image.Image | None) -> tuple[str | None, bool, list[int]]:
+    if image is not None:
+        return ocr_image(image), True, []
+    if Path(filename).suffix.lower() == ".pdf":
+        value, scanned = extract_pdf_text(data)
+        return value, bool(scanned), scanned
+    return extract_text(filename, data), False, []
+
+
+def pdf_visual_difference(left_data: bytes, right_data: bytes, scanned_pages: list[int]) -> dict:
+    changes = []
+    with PdfDocument(left_data) as left, PdfDocument(right_data) as right:
+        for index in scanned_pages:
+            if index >= len(left) or index >= len(right):
+                continue
+            visual = visual_difference(render_pdf_page(left, index, 1.5), render_pdf_page(right, index, 1.5))
+            if not visual["same"]:
+                changes.append({"page": index + 1, **visual})
+        return {"same": len(left) == len(right) and not changes, "left_pages": len(left),
+                "right_pages": len(right), "checked_pages": [index + 1 for index in scanned_pages],
+                "changes": changes}
 
 
 def visual_difference(left: Image.Image, right: Image.Image) -> dict:
@@ -285,15 +353,21 @@ def compare_bytes(left_name: str, left_data: bytes, left_kind: str,
         visual = visual_difference(left_image, right_image) if left_image and right_image else None
         both_spreadsheets = Path(left_name).suffix.lower() in SPREADSHEET_TYPES and Path(right_name).suffix.lower() in SPREADSHEET_TYPES
         spreadsheet = cell_differences(left_name, left_data, right_name, right_data) if both_spreadsheets else None
-        left_text = None if both_spreadsheets else ocr_image(left_image) if left_image else extract_text(left_name, left_data)
-        right_text = None if both_spreadsheets else ocr_image(right_image) if right_image else extract_text(right_name, right_data)
+        left_text, left_ocr, left_scanned = (None, False, []) if both_spreadsheets else source_comparison_text(left_name, left_data, left_image)
+        right_text, right_ocr, right_scanned = (None, False, []) if both_spreadsheets else source_comparison_text(right_name, right_data, right_image)
         text = text_difference(left_text, right_text) if left_text is not None and right_text is not None else None
+        both_pdf = Path(left_name).suffix.lower() == Path(right_name).suffix.lower() == ".pdf"
+        pdf_visual = pdf_visual_difference(left_data, right_data, sorted(set(left_scanned + right_scanned))) if both_pdf and (left_scanned or right_scanned) else None
         if visual and visual["same"]:
             status = "completed"
         elif visual:
             status = "different"
         elif spreadsheet:
             status = "completed" if spreadsheet["same"] else "different"
+        elif pdf_visual and not pdf_visual["same"]:
+            status = "different"
+        elif pdf_visual and pdf_visual["same"] and not left_text and not right_text:
+            status = "completed"
         elif left_kind == right_kind == "document" and left_data == right_data:
             status = "completed"
         elif text is None or ((left_image or right_image) and not (left_text or right_text)):
@@ -301,13 +375,14 @@ def compare_bytes(left_name: str, left_data: bytes, left_kind: str,
         elif not left_text and not right_text:
             status = "inconclusive"
         elif text["same"]:
-            status = "matched_ocr" if left_image or right_image else "completed"
+            status = "matched_ocr" if left_ocr or right_ocr else "completed"
         else:
             status = "different"
         return {"status": status, "left_kind": left_kind, "right_kind": right_kind,
-                "visual": visual, "text": text, "spreadsheet": spreadsheet,
+                "visual": visual, "pdf_visual": pdf_visual, "text": text, "spreadsheet": spreadsheet,
                 "ocr_available": (left_text is not None and right_text is not None),
-                "ocr_language": "tha+eng" if left_image or right_image else None}
+                "ocr_language": "tha+eng" if left_ocr or right_ocr else None,
+                "ocr_used": left_ocr or right_ocr}
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -351,10 +426,18 @@ def report_bytes(left_name: str, left_data: bytes, right_name: str, right_data: 
             visual = visual_difference(left_image, right_image)
             writer.writerow(["รูปภาพ", "ขนาด / พิกเซลต่าง", str(visual["left_size"]), str(visual["right_size"]),
                              visual["changed_pixels"], visual["bounds"]])
-        left_text = ocr_image(left_image) if left_image else extract_text(left_name, left_data)
-        right_text = ocr_image(right_image) if right_image else extract_text(right_name, right_data)
+        left_text, _, left_scanned = source_comparison_text(left_name, left_data, left_image)
+        right_text, _, right_scanned = source_comparison_text(right_name, right_data, right_image)
         if left_text is not None and right_text is not None:
             writer.writerows(line_report_rows(left_text, right_text))
+        if Path(left_name).suffix.lower() == Path(right_name).suffix.lower() == ".pdf" and (left_scanned or right_scanned):
+            visual = pdf_visual_difference(left_data, right_data, sorted(set(left_scanned + right_scanned)))
+            if visual["left_pages"] != visual["right_pages"]:
+                writer.writerow(["PDF จำนวนหน้า", "", visual["left_pages"], visual["right_pages"], "", ""])
+            for change in visual["changes"]:
+                writer.writerow(["PDF ภาพสแกน", f'หน้า {change["page"]}',
+                                 change["bounds"], change["bounds"],
+                                 change["left_size"], change["right_size"]])
     return output.getvalue().encode("utf-8-sig")
 
 
@@ -378,6 +461,7 @@ async def compare_report(left: UploadFile = File(...), right: UploadFile = File(
 class LocalFolders(BaseModel):
     left_path: str
     right_path: str
+    match_mode: str = "auto"
 
 
 class LocalFiles(BaseModel):
@@ -405,15 +489,31 @@ def list_local_files(root: Path) -> dict[str, Path]:
             if item.is_file() and not item.is_symlink() and item.suffix.lower() in SUPPORTED_TYPES}
 
 
-def list_folder_pairs(left_path: str, right_path: str) -> dict:
+def natural_path_key(value: str) -> list:
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", value)]
+
+
+def list_folder_pairs(left_path: str, right_path: str, match_mode: str = "auto") -> dict:
+    if match_mode not in {"auto", "name", "order"}:
+        raise ValueError("วิธีจับคู่ไม่ถูกต้อง")
     left_root, right_root = local_directory(left_path), local_directory(right_path)
     left_files, right_files = list_local_files(left_root), list_local_files(right_root)
-    shared = sorted(left_files.keys() & right_files.keys())
+    left_names, right_names = set(left_files), set(right_files)
+    exact = sorted(left_names & right_names, key=natural_path_key) if match_mode != "order" else []
+    pairs = [(name, name, "name") for name in exact]
+    remaining_left = sorted(left_names - set(exact), key=natural_path_key)
+    remaining_right = sorted(right_names - set(exact), key=natural_path_key)
+    if match_mode != "name":
+        pairs.extend((left, right, "order") for left, right in zip(remaining_left, remaining_right))
+    pairs.sort(key=lambda pair: natural_path_key(pair[0]))
     return {
-        "pairs": [{"name": name, "left_path": str(left_files[name]), "right_path": str(right_files[name]),
-                   "left_name": left_files[name].name, "right_name": right_files[name].name} for name in shared],
-        "left_only": len(left_files.keys() - right_files.keys()),
-        "right_only": len(right_files.keys() - left_files.keys()),
+        "pairs": [{"name": left, "left_path": str(left_files[left]), "right_path": str(right_files[right]),
+                   "left_name": left_files[left].name, "right_name": right_files[right].name,
+                   "match": method} for left, right, method in pairs],
+        "left_only": len(left_files) - len(pairs),
+        "right_only": len(right_files) - len(pairs),
+        "exact_pairs": sum(method == "name" for _, _, method in pairs),
+        "ordered_pairs": sum(method == "order" for _, _, method in pairs),
     }
 
 
@@ -434,7 +534,7 @@ def read_local_file(path: str) -> tuple[str, bytes]:
 async def local_list(request: Request, folders: LocalFolders):
     require_local_access(request)
     try:
-        return await run_in_threadpool(list_folder_pairs, folders.left_path, folders.right_path)
+        return await run_in_threadpool(list_folder_pairs, folders.left_path, folders.right_path, folders.match_mode)
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 

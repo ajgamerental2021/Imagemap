@@ -4,8 +4,8 @@ This repository contains the working FastAPI web app for pairwise comparison and
 
 ## User goals
 
-- Compare 1:1 pairs of documents/images, many pairs per batch. Show exact spreadsheet cells and text line/column differences, plus full CSV difference report.
-- Support `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, DOCX, text formats, text PDFs, and images with OCR. Never claim OCR equality is exact source equality.
+- Compare 1:1 pairs of documents/images, many pairs per batch. Show exact spreadsheet cells and text line/column differences, plus full CSV difference report. In browser folder mode, match identical paths first, then pair remaining files by natural filename order; show the pair list with editable right-side selection. Local path mode supports auto/name/order strategies too.
+- Support `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, DOCX, text formats, text and scanned PDFs, and images with OCR. PDF scan pages are rasterized with pypdfium2 and OCR'd with Tesseract (up to 30 scanned pages per PDF). When both sources are PDFs, scanned pages are also compared as pixels and reported by page/bounding box. Never claim OCR equality is exact source equality.
 - Provide both browser upload and direct local path mode. The latter only works when the FastAPI server runs on the same machine as the files, started with `LOCAL_FOLDER_ACCESS=1`, with the browser opening it on loopback. On macOS the path mode offers a native Finder folder chooser via AppleScript. Render cannot read a user's Mac folder directly.
 - Find user supplied keyword labels across any number of source files. Aggregate all values for each keyword with source/location provenance, allow edits in the UI, and fill a DOCX/XLSX/PDF output from a web designed template or an uploaded template.
 

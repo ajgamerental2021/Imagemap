@@ -40,13 +40,15 @@
         </div>
 
         <div id="folder-panel" class="mode-panel hidden" role="tabpanel">
-          <div class="panel-intro"><strong>จับคู่หลายไฟล์</strong><span>โหมดนี้เบราว์เซอร์จะส่งไฟล์ที่เลือกให้เซิร์ฟเวอร์ · ระบบจับคู่ตาม path หรือชื่อไฟล์</span></div>
+          <div class="panel-intro"><strong>จับคู่หลายไฟล์</strong><span>ชื่อไฟล์ต่างกันก็เทียบได้ · ตรวจคู่ที่จับไว้ด้านล่างก่อนเริ่ม · เบราว์เซอร์ส่งไฟล์ที่เลือกให้เซิร์ฟเวอร์</span></div>
           <div class="folder-grid">
             <div class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">ฝั่งต้นฉบับ</span><span id="left-folder-name" class="folder-subtitle">ยังไม่ได้เลือก</span><div class="folder-actions"><label class="folder-action">เลือกหลายไฟล์<input id="left-files" type="file" multiple></label><label class="folder-action secondary">เลือกโฟลเดอร์<input id="left-folder" type="file" webkitdirectory directory multiple></label></div><span class="drop-hint">หรือลากหลายไฟล์มาวาง</span></div>
             <div class="folder-connector">↔</div>
             <div class="folder-card"><span class="folder-icon">⌁</span><span class="folder-title">ฝั่งที่ต้องการเทียบ</span><span id="right-folder-name" class="folder-subtitle">ยังไม่ได้เลือก</span><div class="folder-actions"><label class="folder-action">เลือกหลายไฟล์<input id="right-files" type="file" multiple></label><label class="folder-action secondary">เลือกโฟลเดอร์<input id="right-folder" type="file" webkitdirectory directory multiple></label></div><span class="drop-hint">หรือลากหลายไฟล์มาวาง</span></div>
           </div>
+          <div class="folder-pair-controls"><label for="folder-match-mode">วิธีจับคู่</label><select id="folder-match-mode"><option value="auto">ชื่อ/path ตรงกันก่อน แล้วจับคู่ที่เหลือตามลำดับชื่อ</option><option value="order">จับคู่ตามลำดับชื่อทั้งหมด</option><option value="name">เฉพาะชื่อ/path ที่ตรงกัน</option></select></div>
           <p id="folder-summary" class="folder-summary">เลือกข้อมูลทั้งสองฝั่งเพื่อดูรายการที่จับคู่ได้ · ปุ่ม “เลือกโฟลเดอร์” ต้องเลือกโฟลเดอร์ ไม่สามารถเลือกไฟล์เดี่ยวได้</p>
+          <div id="folder-pair-preview" class="folder-pair-preview" aria-live="polite"></div>
         </div>
 
         <div id="local-panel" class="mode-panel hidden" role="tabpanel">
@@ -55,10 +57,11 @@
             <label>โฟลเดอร์ต้นฉบับ<span class="path-control"><input id="local-left" type="text" placeholder="/Users/yourname/Documents/original" autocomplete="off"><button type="button" class="path-picker hidden" data-pick-path="local-left">เลือกโฟลเดอร์</button></span></label>
             <label>โฟลเดอร์ที่ต้องการเทียบ<span class="path-control"><input id="local-right" type="text" placeholder="/Users/yourname/Documents/revised" autocomplete="off"><button type="button" class="path-picker hidden" data-pick-path="local-right">เลือกโฟลเดอร์</button></span></label>
           </div>
+          <div class="folder-pair-controls"><label for="local-match-mode">วิธีจับคู่</label><select id="local-match-mode"><option value="auto">ชื่อ/path ตรงกันก่อน แล้วจับคู่ที่เหลือตามลำดับชื่อ</option><option value="order">จับคู่ตามลำดับชื่อทั้งหมด</option><option value="name">เฉพาะชื่อ/path ที่ตรงกัน</option></select></div>
           <p id="local-summary" class="folder-summary">วาง path ของสองโฟลเดอร์ แล้วกดเริ่มเปรียบเทียบ · ใน Finder ใช้ Option+Command+C เพื่อคัดลอก path</p>
         </div>
 
-        <div class="action-row"><div class="support-note">รองรับ TXT, CSV, JSON, PDF, DOCX, Excel (.xls, .xlsx, .xlsm, .xlsb) และรูปภาพ · สูงสุด 20 MB / ไฟล์</div><button id="compare-button" class="compare-button" type="button">เริ่มเปรียบเทียบ <span>↗</span></button></div>
+        <div class="action-row"><div class="support-note">รองรับ TXT, CSV, JSON, PDF (รวมไฟล์สแกน), DOCX, Excel (.xls, .xlsx, .xlsm, .xlsb) และรูปภาพ · สูงสุด 20 MB / ไฟล์</div><button id="compare-button" class="compare-button" type="button">เริ่มเปรียบเทียบ <span>↗</span></button></div>
       </section>
 
       <section id="results-section" class="results-section hidden" aria-labelledby="results-heading">

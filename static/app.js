@@ -5,6 +5,8 @@ let mode = 'manual';
 let pairs = [];
 let nextId = 1;
 let folderPairs = [];
+let folderRightChoices = [];
+let folderCounts = {left:0,right:0,unsupported:0};
 const folderSelections = {left:[],right:[]};
 const folderSources = {left:'',right:''};
 let unmatched = {left:0,right:0,unsupported:0};
@@ -111,6 +113,49 @@ function relativeName(file) {
   return parts.length > 1 ? parts.slice(1).join('/') : file.name;
 }
 
+const folderCollator = new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
+function byRelativeName(a,b) {
+  return folderCollator.compare(relativeName(a),relativeName(b));
+}
+
+function renderFolderPreview() {
+  const preview = $('folder-pair-preview');
+  preview.replaceChildren();
+  const usedRights = new Set(folderPairs.map(pair => pair.right));
+  const exact = folderPairs.filter(pair => pair.match === 'name').length;
+  const order = folderPairs.filter(pair => pair.match === 'order').length;
+  const manual = folderPairs.filter(pair => pair.match === 'manual').length;
+  unmatched = {left:folderCounts.left-folderPairs.length,right:folderCounts.right-usedRights.size,unsupported:folderCounts.unsupported};
+  $('folder-summary').textContent = `จับคู่ได้ ${folderPairs.length} คู่ · ชื่อตรง ${exact} · ตามลำดับ ${order} · ปรับเอง ${manual} · ยังไม่จับคู่ ${unmatched.left} / ${unmatched.right} · ชนิดไฟล์ที่ไม่รองรับ ${unmatched.unsupported}`;
+  if (!folderPairs.length) return;
+  const heading = element('h3','folder-preview-heading','ตรวจคู่ไฟล์ก่อนเปรียบเทียบ');
+  preview.append(heading);
+  folderPairs.forEach((pair,index) => {
+    const row = element('div','folder-preview-row');
+    const left = element('div','folder-preview-name',`${index+1}. ${relativeName(pair.left)}`);
+    const arrow = element('span','folder-preview-arrow','↔');
+    const select = element('select','folder-preview-select');
+    select.setAttribute('aria-label',`ไฟล์ฝั่งเทียบของคู่ ${index+1}`);
+    folderRightChoices.forEach((file,fileIndex) => {
+      const option = element('option','',relativeName(file));
+      option.value = String(fileIndex);
+      select.append(option);
+    });
+    select.value = String(folderRightChoices.indexOf(pair.right));
+    select.addEventListener('change', () => {
+      const selected = folderRightChoices[Number(select.value)];
+      const other = folderPairs.find(candidate => candidate !== pair && candidate.right === selected);
+      if (other) {other.right = pair.right; other.match = 'manual';}
+      pair.right = selected;
+      pair.match = 'manual';
+      renderFolderPreview();
+    });
+    const method = element('small','folder-preview-method',pair.match === 'name' ? 'ชื่อตรง' : pair.match === 'order' ? 'ตามลำดับ' : 'ปรับเอง');
+    row.append(left,arrow,select,method);
+    preview.append(row);
+  });
+}
+
 function updateFolderPairs() {
   const leftFiles = folderSelections.left;
   const rightFiles = folderSelections.right;
@@ -123,20 +168,31 @@ function updateFolderPairs() {
   }
   folderPairs = [];
   unmatched = {left:0,right:0,unsupported:0};
+  $('folder-pair-preview').replaceChildren();
   if (!leftFiles.length || !rightFiles.length) {
     $('folder-summary').textContent = 'เลือกข้อมูลทั้งสองฝั่งเพื่อดูรายการที่จับคู่ได้ · ปุ่ม “เลือกโฟลเดอร์” ต้องเลือกโฟลเดอร์ ไม่สามารถเลือกไฟล์เดี่ยวได้';
     return;
   }
-  const leftMap = new Map(leftFiles.map(file => [relativeName(file),file]));
-  const rightMap = new Map(rightFiles.map(file => [relativeName(file),file]));
-  for (const [path,left] of leftMap) {
-    const right = rightMap.get(path);
-    if (!right) { unmatched.left++; continue; }
-    if (!fileSupported(left) || !fileSupported(right)) { unmatched.unsupported++; continue; }
-    folderPairs.push({left,right,name:path});
+  const validLeft = leftFiles.filter(fileSupported).sort(byRelativeName);
+  folderRightChoices = rightFiles.filter(fileSupported).sort(byRelativeName);
+  folderCounts = {left:validLeft.length,right:folderRightChoices.length,
+    unsupported:leftFiles.length+rightFiles.length-validLeft.length-folderRightChoices.length};
+  const method = $('folder-match-mode').value;
+  const remainingRight = [...folderRightChoices];
+  const remainingLeft = [];
+  for (const left of validLeft) {
+    const index = method === 'order' ? -1 : remainingRight.findIndex(right => relativeName(right) === relativeName(left));
+    if (index < 0) remainingLeft.push(left);
+    else folderPairs.push({left,right:remainingRight.splice(index,1)[0],name:relativeName(left),match:'name'});
   }
-  unmatched.right = Array.from(rightMap.keys()).filter(path => !leftMap.has(path)).length;
-  $('folder-summary').textContent = `จับคู่ได้ ${folderPairs.length} คู่ · มีเฉพาะฝั่งต้นฉบับ ${unmatched.left} · มีเฉพาะฝั่งเทียบ ${unmatched.right} · ชนิดไฟล์ที่ไม่รองรับ ${unmatched.unsupported}`;
+  if (method !== 'name') {
+    for (let index=0; index<Math.min(remainingLeft.length,remainingRight.length); index++) {
+      const left = remainingLeft[index];
+      folderPairs.push({left,right:remainingRight[index],name:relativeName(left),match:'order'});
+    }
+  }
+  folderPairs.sort((a,b)=>byRelativeName(a.left,b.left));
+  renderFolderPreview();
 }
 
 function selectFolderFiles(side,source,input) {
@@ -226,12 +282,18 @@ function renderResult(item,index) {
     detailParagraph(detail,result.message,'error-message');
   } else {
     if (result.status === 'completed') detailParagraph(detail,'ข้อมูลที่ตรวจเปรียบเทียบตรงกันทั้งหมด');
-    if (result.status === 'matched_ocr') detailParagraph(detail,'ข้อความที่ OCR อ่านจากรูปตรงกับเอกสารทุกตัวอักษรที่อ่านได้ แต่ OCR อาจอ่านผิดหรือข้ามข้อความ');
+    if (result.status === 'matched_ocr') detailParagraph(detail,'ข้อความที่ OCR อ่านจากรูปหรือ PDF สแกนตรงกันตามที่อ่านได้ แต่ OCR อาจอ่านผิดหรือข้ามข้อความ');
     if (result.status === 'inconclusive') detailParagraph(detail,'ไม่พบข้อความที่อ่านได้เพียงพอสำหรับยืนยันความตรงกัน อาจเป็นเอกสารสแกนหรือรูปที่ OCR อ่านไม่ได้');
+    if (result.ocr_used && result.status === 'different') detailParagraph(detail,'มีการอ่านรูปหรือ PDF สแกนด้วย OCR โปรดตรวจข้อมูลที่ต่างกับไฟล์ต้นฉบับอีกครั้ง');
     if (result.visual) {
       const v = result.visual;
       detailParagraph(detail,`ภาพ: ${v.left_size.join(' × ')} ↔ ${v.right_size.join(' × ')} พิกเซล · ${v.same ? 'พิกเซลตรงกันทั้งหมด' : v.changed_pixels === null ? 'ขนาดภาพต่างกัน' : `${v.changed_pixels.toLocaleString()} พิกเซลต่างกัน`}`);
       if (v.bounds) detailParagraph(detail,`กรอบบริเวณพิกเซลที่ต่าง: ซ้าย ${v.bounds[0]}, บน ${v.bounds[1]}, ขวา ${v.bounds[2]}, ล่าง ${v.bounds[3]}`);
+    }
+    if (result.pdf_visual) {
+      const pdf = result.pdf_visual;
+      detailParagraph(detail,`PDF: ${pdf.left_pages} ↔ ${pdf.right_pages} หน้า · ตรวจภาพหน้าสแกน ${pdf.checked_pages.length} หน้า`);
+      pdf.changes.forEach(change => detailParagraph(detail,`หน้าที่ ${change.page}: ${change.changed_pixels === null ? 'ขนาดหน้าต่างกัน' : `${change.changed_pixels.toLocaleString()} พิกเซลต่างกัน`}${change.bounds ? ` · กรอบต่าง x=${change.bounds[0]}–${change.bounds[2]}, y=${change.bounds[1]}–${change.bounds[3]}` : ''}`));
     }
     if (result.spreadsheet) {
       const sheet = result.spreadsheet;
@@ -350,12 +412,12 @@ async function compareAll() {
     try {
       const response = await fetch('/api/local/list',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({left_path,right_path})
+        body:JSON.stringify({left_path,right_path,match_mode:$('local-match-mode').value})
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
       items = body.pairs.map(pair => ({...pair,local:true,left:{name:pair.left_name},right:{name:pair.right_name}}));
-      $('local-summary').textContent = `จับคู่ได้ ${items.length} คู่ · เฉพาะฝั่งต้นฉบับ ${body.left_only} · เฉพาะฝั่งเทียบ ${body.right_only} · อ่านไฟล์จากเครื่องโดยตรง`;
+      $('local-summary').textContent = `จับคู่ได้ ${items.length} คู่ · ชื่อตรง ${body.exact_pairs} · ตามลำดับ ${body.ordered_pairs} · ยังไม่จับคู่ ${body.left_only} / ${body.right_only} · อ่านไฟล์จากเครื่องโดยตรง`;
     } catch (error) {
       $('local-summary').textContent = error.message || 'อ่านโฟลเดอร์ไม่ได้';
       return;
@@ -364,7 +426,7 @@ async function compareAll() {
     items = mode === 'manual' ? pairs.filter(pair => pair.left && pair.right) : folderPairs;
   }
   if (!items.length) {
-    alert(mode === 'manual' ? 'กรุณาเลือกไฟล์ทั้งสองฝั่งอย่างน้อยหนึ่งคู่' : 'ไม่พบไฟล์ที่ path หรือชื่อเดียวกันในสองโฟลเดอร์');
+    alert(mode === 'manual' ? 'กรุณาเลือกไฟล์ทั้งสองฝั่งอย่างน้อยหนึ่งคู่' : 'ไม่พบคู่ไฟล์ที่เปรียบเทียบได้ ตรวจชนิดไฟล์และวิธีจับคู่');
     return;
   }
   const button = $('compare-button');
@@ -392,6 +454,7 @@ $('manual-tab').addEventListener('click',()=>setMode('manual'));
 $('folder-tab').addEventListener('click',()=>setMode('folder'));
 $('local-tab').addEventListener('click',()=>setMode('local'));
 $('add-pair').addEventListener('click',createPair);
+$('folder-match-mode').addEventListener('change',updateFolderPairs);
 for (const side of ['left','right']) {
   $(`${side}-folder`).addEventListener('change',event => selectFolderFiles(side,'folder',event.target));
   $(`${side}-files`).accept = [...supported].map(extension => `.${extension}`).join(',');

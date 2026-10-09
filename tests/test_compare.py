@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 from xlwt import Workbook as LegacyWorkbook
 
 from app import app, extract_text
@@ -75,14 +77,62 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(body['status'], 'matched_ocr')
         self.assertTrue(body['text']['same'])
 
-    def test_unreadable_pdf_text_is_inconclusive(self):
+    def test_blank_pdf_page_size_difference_is_detected(self):
         def pdf(width):
             writer = PdfWriter()
             writer.add_blank_page(width=width, height=200)
             buffer = io.BytesIO()
             writer.write(buffer)
             return buffer.getvalue()
-        self.assertEqual(request('a.pdf', pdf(100), 'b.pdf', pdf(110)).json()['status'], 'inconclusive')
+        result = request('a.pdf', pdf(100), 'b.pdf', pdf(110)).json()
+        self.assertEqual(result['status'], 'different')
+        self.assertIsNone(result['pdf_visual']['changes'][0]['changed_pixels'])
+
+    def test_text_pdf_and_scanned_pdf_compare(self):
+        def text_pdf(value):
+            output = io.BytesIO()
+            page = canvas.Canvas(output)
+            page.drawString(50, 750, value)
+            page.save()
+            return output.getvalue()
+        text_result = request('old.pdf', text_pdf('Invoice 123'), 'new.pdf', text_pdf('Invoice 124'))
+        self.assertEqual(text_result.status_code, 200)
+        self.assertEqual(text_result.json()['status'], 'different')
+        self.assertFalse(text_result.json()['ocr_used'])
+        report = client.post('/api/compare/report', files={
+            'left': ('old.pdf', text_pdf('Invoice 123')),
+            'right': ('new.pdf', text_pdf('Invoice 124')),
+        })
+        self.assertIn('Invoice 124', report.content.decode('utf-8-sig'))
+
+        def scanned_pdf(value):
+            output = io.BytesIO()
+            page = canvas.Canvas(output, pagesize=(430, 105))
+            page.drawImage(ImageReader(io.BytesIO(image_bytes(value))), 0, 0, width=430, height=105)
+            page.save()
+            return output.getvalue()
+        scanned = request('scan1.pdf', scanned_pdf('HELLO 123'), 'scan2.pdf', scanned_pdf('HELLO 124'))
+        self.assertEqual(scanned.status_code, 200, scanned.text[:300])
+        self.assertEqual(scanned.json()['status'], 'different')
+        self.assertTrue(scanned.json()['ocr_used'])
+        matching = request('scan1.pdf', scanned_pdf('HELLO 123'), 'scan2.pdf', scanned_pdf('HELLO 123'))
+        self.assertEqual(matching.json()['status'], 'matched_ocr')
+
+        def graphic_pdf(gray):
+            output = io.BytesIO()
+            page = canvas.Canvas(output, pagesize=(220, 120))
+            page.setFillGray(gray)
+            page.rect(20, 20, 70, 60, stroke=0, fill=1)
+            page.save()
+            return output.getvalue()
+        graphic_left, graphic_right = graphic_pdf(0), graphic_pdf(0.5)
+        graphic = request('graphic-left.pdf', graphic_left, 'graphic-right.pdf', graphic_right).json()
+        self.assertEqual(graphic['status'], 'different')
+        self.assertEqual(graphic['pdf_visual']['changes'][0]['page'], 1)
+        report = client.post('/api/compare/report', files={
+            'left': ('graphic-left.pdf', graphic_left), 'right': ('graphic-right.pdf', graphic_right),
+        })
+        self.assertIn('PDF ภาพสแกน', report.content.decode('utf-8-sig'))
 
     def test_docx_and_xlsx_extraction(self):
         doc = Document()
@@ -154,6 +204,14 @@ class ComparisonTests(unittest.TestCase):
                 self.assertEqual(comparison.json()['status'], 'different')
                 report = local_client.post('/api/local/report', json=pair)
                 self.assertIn('old', report.content.decode('utf-8-sig'))
+                (left / 'old-2.pdf').write_bytes(b'pdf placeholder')
+                (right / 'new-2.pdf').write_bytes(b'pdf placeholder')
+                fallback = local_client.post('/api/local/list', json=payload).json()
+                self.assertEqual(fallback['ordered_pairs'], 1)
+                self.assertEqual(len(fallback['pairs']), 2)
+                self.assertEqual(fallback['pairs'][1]['left_name'], 'old-2.pdf')
+                strict = local_client.post('/api/local/list', json={**payload, 'match_mode': 'name'}).json()
+                self.assertEqual(len(strict['pairs']), 1)
 
     def test_xlsb_extracts_sheet_and_cell_values(self):
         sample = (Path(__file__).parent / 'fixtures' / 'sample.xlsb').read_bytes()
